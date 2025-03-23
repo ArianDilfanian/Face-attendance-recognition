@@ -8,6 +8,10 @@ from PIL import Image, ImageTk
 from tkinter import Canvas
 import pyttsx3
 import time
+import threading
+import face_recognition
+from deepface import DeepFace
+import tf_keras
 
 
 
@@ -90,17 +94,82 @@ class App:
         self._label = label
         self.process_webcam()
 
+
+    def detect_age_emotion(self, frame):
+        try:
+            # Analyze age, gender, and emotion using DeepFace
+            result = DeepFace.analyze(frame, actions=['age', 'emotion'], enforce_detection=False)
+
+            # Extract age, gender, and emotion
+            age = result[0]['age']  # Get the estimated age
+            emotion = result[0]['dominant_emotion']  # Get the dominant emotion
+
+            return age, emotion  # Return all values
+        except Exception as e:
+            print(f"Error detecting age/emotion: {e}")
+            return "Unknown", "Unknown",  # Return three values in case of error
+
+
+
     def process_webcam(self):
         ret, frame = self.cap.read()
 
-        self.most_recent_capture_arr = frame
-        img_ = cv2.cvtColor(self.most_recent_capture_arr, cv2.COLOR_BGR2RGB)
-        self.most_recent_capture_pil = Image.fromarray(img_)
-        imgtk = ImageTk.PhotoImage(image=self.most_recent_capture_pil)
-        self._label.imgtk = imgtk
-        self._label.configure(image=imgtk)
+        if ret:
+            if not hasattr(self, 'frame_counter'):
+                self.frame_counter = 0
 
-        self._label.after(20, self.process_webcam) # this function is going to take a frame from the webcam and we convert this frame into the format we need in order tto put it into the label and repeat every 20milliseconds
+            # Initialize variables to store detection results
+            if not hasattr(self, 'last_age'):
+                self.last_age = "Unknown"
+            if not hasattr(self, 'last_emotion'):
+                self.last_emotion = "Unknown"
+            if not hasattr(self, 'last_face_locations'):
+                self.last_face_locations = []
+
+            # Process every 3rd frame
+            if self.frame_counter % 2 == 0:
+                # Resize frame for faster processing
+                small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+
+                # Detect age and emotion on the smaller frame
+                self.last_age, self.last_emotion = self.detect_age_emotion(small_frame)
+
+                # Convert the smaller frame to RGB for face detection
+                rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+
+                # Detect faces in the smaller frame
+                face_locations = face_recognition.face_locations(rgb_small_frame)
+
+                # Scale back face locations to match the original frame size
+                self.last_face_locations = [(top * 4, right * 4, bottom * 4, left * 4) for (top, right, bottom, left) in
+                                            face_locations]
+
+            # Draw face rectangles and labels using the last detection results
+            for (top, right, bottom, left) in self.last_face_locations:
+                cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+
+            cv2.putText(frame, f"Age: {self.last_age}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 1)
+            cv2.putText(frame, f"Emotion: {self.last_emotion}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 1)
+
+            # Increment frame counter
+            self.frame_counter += 1
+
+            # Update the most recent capture array
+            self.most_recent_capture_arr = frame
+
+            # Convert the frame to a format suitable for Tkinter
+            img_ = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self.most_recent_capture_pil = Image.fromarray(img_)
+            imgtk = ImageTk.PhotoImage(image=self.most_recent_capture_pil)
+            self._label.imgtk = imgtk
+            self._label.configure(image=imgtk)
+
+        # Repeat every 20 milliseconds
+        self._label.after(20, self.process_webcam)
+
+    # this function is going to take a frame from the webcam and we convert this frame into the format we need in order tto put it into the label and repeat every 20milliseconds
+
+
 
     def speak(self, text, pause_before_name=False):
         """Speaks the given text using the text-to-speech engine"""
@@ -134,39 +203,49 @@ class App:
         self.engine.setProperty('rate', 170)  # Adjust speed
         self.engine.setProperty('volume', 1.0)  # Max volume
 
+
     def login(self):
+        threading.Thread(target=self._login_thread, daemon=True).start()
+
+    def _login_thread(self):
         unknown_img_path = './.tmp.jpg'
 
-        # Ensure the frame is valid before writing
         if self.most_recent_capture_arr is None:
-            util.msg_box('Error', 'Failed to capture image.', icon_path="icons/x-button.png")
+            self.main_window.after(0, lambda: util.msg_box('Error', 'Failed to capture image.',
+                                                           icon_path="icons/x-button.png"))
             return
 
-        # Save the captured frame
         success = cv2.imwrite(unknown_img_path, self.most_recent_capture_arr)
-
         if not success:
-            util.msg_box('Error', 'Could not save temporary image.', icon_path="icons/x-button.png")
+            self.main_window.after(0, lambda: util.msg_box('Error', 'Could not save temporary image.',
+                                                           icon_path="icons/x-button.png"))
             return
 
-        output = str(subprocess.check_output(['face_recognition', self.db_dir, unknown_img_path]))
-        name = output.split(',')[1][:-5]
-        print(name)
+        try:
+            output = str(subprocess.check_output(['face_recognition', self.db_dir, unknown_img_path]))
+            name = output.split(',')[1][:-5]
+            print(name)
 
-        if name in ['unknown_person']:
-            util.msg_box('Access Denied', 'Unknown user. Please register.', icon_path="icons/x-button.png")
+            if name in ['unknown_person']:
+                self.main_window.after(0, lambda: util.msg_box('Access Denied', 'Unknown user. Please register.',
+                                                               icon_path="icons/x-button.png"))
+            elif name in ['no_persons_found']:
+                self.main_window.after(0, lambda: util.msg_box('Access Denied', 'No persons found. Try again.',
+                                                               icon_path="icons/x-button.png"))
+            else:
+                self.main_window.after(0, lambda: util.msg_box('Welcome', f"Welcome, {name}!",
+                                                               icon_path="icons/shield.png"))
 
-        elif name in ['no_persons_found']:
-            util.msg_box('Access Denied', 'No persons found. Try again.', icon_path="icons/x-button.png")
+                with open(self.log_path, 'a') as f:
+                    f.write(f'{name},{datetime.datetime.now()}\n')
 
-        else:
-            util.msg_box('Welcome', f"Welcome, {name}!", icon_path="icons/shield.png")
-            with open(self.log_path, 'a') as f:
-                f.write(f'{name},{datetime.datetime.now()}\n')
+        except Exception as e:
+            self.main_window.after(0, lambda: util.msg_box('Error', f'Login failed: {str(e)}'))
 
-        # Check before deleting the file
-        if os.path.exists(unknown_img_path):
-            os.remove(unknown_img_path)
+        finally:
+            if os.path.exists(unknown_img_path):
+                os.remove(unknown_img_path)
+
 
     def register_new_user(self):
         self.register_new_user_window = tk.Toplevel(self.main_window) # we create a new window secondary window inside the other window
@@ -216,14 +295,22 @@ class App:
     def start(self): # implement first
         self.main_window.mainloop() # in order to run our app and keep it open
 
-    def accept_register_new_user(self): # later
-        name = self.entry_text_register_new_user.get(1.0, "end-1c") # search
+    def accept_register_new_user(self):
+        # Disable the button to prevent multiple clicks
+        self.accept_button_register_new_user_window.config(state=tk.DISABLED)
 
-        cv2.imwrite(os.path.join(self.db_dir, '{}.jpg'.format(name)), self.register_new_user_capture) # save the image - path and format register_new_user_capture
+        name = self.entry_text_register_new_user.get(1.0, "end-1c")  # Get the username
 
-        util.msg_box('Success', 'User was registered successfully !') # title, description we need to show user a msg
+        # Save the captured image
+        cv2.imwrite(os.path.join(self.db_dir, '{}.jpg'.format(name)), self.register_new_user_capture)
 
-        self.register_new_user_window.destroy()
+        # Close the registration window
+        if hasattr(self, 'register_new_user_window') and self.register_new_user_window.winfo_exists():
+            self.register_new_user_window.destroy()
+
+        # Show non-blocking success message
+        self.main_window.after(0, lambda: util.msg_box('Success', 'User was registered successfully!'))
+
 
 
 
