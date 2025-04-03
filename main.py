@@ -1,6 +1,6 @@
 import os.path
 import subprocess
-import datetime
+from datetime import datetime, timedelta
 import tkinter as tk
 import util
 import cv2
@@ -13,6 +13,8 @@ import face_recognition
 from deepface import DeepFace
 import tf_keras
 from openpyxl import Workbook, load_workbook
+from pathlib import Path
+from io import StringIO
 
 
 
@@ -24,6 +26,8 @@ class App:
         self.main_window.configure(bg="#1f1f1f") # bg color
         self.emotion_buffer = []  # Stores recent emotions
         self.buffer_size = 5      # Number of frames to average
+        self.setup_logging()  # Initialize Excel logging
+        self.log_lock = threading.Lock()
 
         # 323232
         self.main_window.title("FaceRec") # title name
@@ -75,7 +79,7 @@ class App:
             os.mkdir(self.db_dir)
 
         # old log
-        self.log_path = './log.txt' # file format
+        #self.log_path = './log.txt' # file format
 
         # Adding Hover Effects
         self.login_button_main_window.bind("<Enter>", lambda e: self.on_enter(e, "darkgreen"))
@@ -83,6 +87,52 @@ class App:
 
         self.register_new_user_button_main_window.bind("<Enter>", lambda e: self.on_enter(e, "lightgray"))
         self.register_new_user_button_main_window.bind("<Leave>", lambda e: self.on_leave(e, "white"))
+
+
+
+    def _init_logging_system(self):
+        """Initialize the logging system with proper error handling"""
+        self.log_dir = Path("./attendance_logs")
+        self.log_dir.mkdir(exist_ok=True)
+        self.excel_path = self.log_dir / f"attendance_{datetime.now().strftime('%Y%m%d')}.xlsx"
+
+        if not self.excel_path.exists():
+            try:
+                self.workbook = Workbook()
+                self.sheet = self.workbook.active
+                self.sheet.append(["Name", "Emotion", "Time In", "Time Out", "Duration"])
+                self._safe_excel_save()
+            except Exception as e:
+                print(f"Failed to create new log file: {e}")
+                self._setup_emergency_logging()
+
+    def _safe_excel_save(self):
+        """Save Excel file with proper error handling"""
+        for attempt in range(3):
+            try:
+                temp_path = self.excel_path.with_suffix('.tmp')
+                self.workbook.save(temp_path)
+                if self.excel_path.exists():
+                    self.excel_path.unlink()
+                temp_path.rename(self.excel_path)
+                return True
+            except Exception as e:
+                print(f"Save attempt {attempt + 1} failed: {e}")
+                time.sleep(0.5)
+        return False
+
+    def _setup_emergency_logging(self):
+        """Fallback when primary logging fails"""
+        self.excel_path = self.log_dir / "emergency_attendance.xlsx"
+        try:
+            self.workbook = Workbook()
+            self.sheet = self.workbook.active
+            self.sheet.append(["Name", "Emotion", "Time In", "Time Out", "Duration"])
+            self._safe_excel_save()
+        except Exception as e:
+            print(f"Critical logging failure: {e}")
+
+
 
     def on_enter(self, event, color):
         event.widget.config(bg=color)
@@ -132,6 +182,16 @@ class App:
         except Exception as e:
             print(f"Error in emotion detection: {str(e)}")
             return "Unknown", "neutral"  # Fallback values
+
+
+    # new
+    def cleanup(self):
+        """Proper cleanup on application exit"""
+        if hasattr(self, 'workbook'):
+            try:
+                self.workbook.close()
+            except:
+                pass
 
 
 
@@ -227,81 +287,212 @@ class App:
         self.engine.setProperty('rate', 170)  # Adjust speed
         self.engine.setProperty('volume', 1.0)  # Max volume
 
+    def calculate_duration(self, time_in_str, time_out_str):
+
+        time_in = datetime.strptime(time_in_str, "%H:%M:%S").time()
+        time_out = datetime.strptime(time_out_str, "%H:%M:%S").time()
+        today = datetime.now().date()
+
+        time_in_dt = datetime.combine(today, time_in)
+        time_out_dt = datetime.combine(today, time_out)
+
+        if time_out < time_in:  # Overnight case
+            time_out_dt += timedelta(days=1)
+
+        return time_out_dt - time_in_dt
+
+
+
+    def setup_logging(self):
+        """Initialize Excel logging with proper file handling"""
+        from pathlib import Path
+        self.log_dir = Path("./attendance_logs")
+        self.log_dir.mkdir(exist_ok=True)
+
+        # Create daily log file path
+        self.excel_path = self.log_dir / f"attendance_{datetime.now().strftime('%Y%m%d')}.xlsx"
+
+        try:
+            if self.excel_path.exists():
+                try:
+                    # Open with read-only first to check integrity
+                    with open(self.excel_path, 'rb') as f:
+                        load_workbook(f)
+                    self.workbook = load_workbook(self.excel_path)
+                except:
+                    # Create backup of corrupt file
+                    corrupt_path = self.log_dir / f"corrupt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                    self.excel_path.rename(corrupt_path)
+                    self._create_new_workbook()
+            else:
+                self._create_new_workbook()
+
+        except Exception as e:
+            print(f"Excel initialization error: {e}")
+            self._create_emergency_log()
+
+
+    def _create_new_workbook(self):
+        """Create fresh workbook with proper headers"""
+        self.workbook = Workbook()
+        self.sheet = self.workbook.active
+        self.sheet.append(["Name", "Emotion", "Time In", "Time Out", "Duration"])
+        self._safe_save()
+
+
+    def _safe_save(self):
+        """Save workbook with proper file handling"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Create temporary file
+                temp_path = self.excel_path.with_suffix('.tmp')
+                self.workbook.save(temp_path)
+
+                # Replace original file atomically
+                if self.excel_path.exists():
+                    self.excel_path.unlink()
+                temp_path.rename(self.excel_path)
+                break
+            except Exception as e:
+                print(f"Save attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    self._create_emergency_log()
+                time.sleep(0.5)
+
+    def _log_attendance(self, name, emotion):
+        """Thread-safe attendance logging with retry logic"""
+        for attempt in range(3):
+            try:
+                now = datetime.now()
+                time_str = now.strftime("%H:%M:%S")
+
+                # Load fresh workbook instance
+                self.workbook = load_workbook(self.excel_path)
+                self.sheet = self.workbook.active
+
+                # Check for existing entry
+                record_updated = False
+                for idx, row in enumerate(self.sheet.iter_rows(min_row=2, values_only=True), start=2):
+                    if row and row[0] == name and row[3] is None:
+                        try:
+                            # Calculate duration
+                            time_in = datetime.strptime(row[2], "%H:%M:%S").time()
+                            time_in_dt = datetime.combine(now.date(), time_in)
+                            if now.time() < time_in:
+                                time_in_dt -= timedelta(days=1)
+
+                            duration = now - time_in_dt
+                            hours, rem = divmod(int(duration.total_seconds()), 3600)
+                            minutes, seconds = divmod(rem, 60)
+                            duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+                            # Update record
+                            self.sheet.cell(row=idx, column=4, value=time_str)
+                            self.sheet.cell(row=idx, column=5, value=duration_str)
+                            record_updated = True
+                            break
+                        except ValueError as e:
+                            print(f"Time parsing error: {e}")
+                            continue
+
+                # Add new record if needed
+                if not record_updated:
+                    self.sheet.append([name, emotion, time_str, None, None])
+
+                # Save changes
+                if not self._safe_excel_save():
+                    raise IOError("Failed to save Excel file")
+
+                return  # Success
+
+            except Exception as e:
+                print(f"Logging attempt {attempt + 1} failed: {e}")
+                if attempt == 2:  # Final attempt failed
+                    self._log_to_text_backup(name, emotion, time_str)
+                time.sleep(0.5)
+
+
+
+
 
     def login(self):
         threading.Thread(target=self._login_thread, daemon=True).start()
 
-
     def _login_thread(self):
-        unknown_img_path = './.tmp.jpg'
-
-        if self.most_recent_capture_arr is None:
-            self.main_window.after(0, lambda: util.msg_box('Error', 'Failed to capture image.',
-                                                           icon_path="icons/x-button.png"))
-            return
-
-        success = cv2.imwrite(unknown_img_path, self.most_recent_capture_arr)
-        if not success:
-            self.main_window.after(0, lambda: util.msg_box('Error', 'Could not save temporary image.',
-                                                           icon_path="icons/x-button.png"))
-            return
+        temp_img_path = Path("./temp/temp_capture.jpg")
+        temp_img_path.parent.mkdir(exist_ok=True)
 
         try:
-            output = str(subprocess.check_output(['face_recognition', self.db_dir, unknown_img_path]))
-            name = output.split(',')[1][:-5]
-            print(name)
+            # 1. Verify image capture
+            if self.most_recent_capture_arr is None:
+                raise ValueError("No image captured")
 
-            # Detect age and emotion
+            # 2. Save temporary image
+            if not cv2.imwrite(str(temp_img_path), self.most_recent_capture_arr):
+                raise IOError("Failed to save temporary image")
+
+            # 3. Face recognition
+            try:
+                output = subprocess.check_output(
+                    ['face_recognition', str(self.db_dir), str(temp_img_path)],
+                    stderr=subprocess.PIPE
+                ).decode('utf-8')
+                name = output.split(',')[1].strip()
+            except subprocess.CalledProcessError as e:
+                raise ValueError(f"Face recognition failed: {e.stderr.decode('utf-8')}")
+
+            # 4. Emotion detection
             age, emotion = self.detect_age_emotion(self.most_recent_capture_arr)
-            emotion = emotion.lower()  # Ensure lowercase for comparison
+            emotion = emotion.lower()
 
-            if name in ['unknown_person']:
+            # 5. Handle different cases
+            if name == 'unknown_person':
                 self.main_window.after(0, lambda: util.msg_box(
                     'Access Denied',
                     'Unknown user. Please register.',
                     icon_path="icons/x-button.png"
                 ))
-            elif name in ['no_persons_found']:
+            elif name == 'no_persons_found':
                 self.main_window.after(0, lambda: util.msg_box(
                     'Access Denied',
-                    'No persons found. Try again.',
+                    'No face detected. Please try again.',
                     icon_path="icons/x-button.png"
                 ))
             else:
-                # Customize message based on emotion
-                if emotion == "happy":
-                    welcome_msg = f"Welcome, {name}! Wonderful to see you smiling today !"
-                elif emotion == "sad":
-                    welcome_msg = f"Welcome, {name}! I notice you might be having a difficult day. i hope things get better soon"
+                # Successful login
+                welcome_msg = {
+                    'happy': f"Welcome, {name}! You look happy today!",
+                    'sad': f"Welcome, {name}. We hope your day gets better.",
+                    'angry': f"Welcome, {name}. We appreciate your patience.",
+                }.get(emotion, f"Welcome, {name}!")
 
-                elif emotion == "angry":
-                    welcome_msg = f"Welcome, {name}! i appreciate your patience"
-
-                else:
-                    welcome_msg = f"Welcome, {name}!"
-
-                # Show message box and speak
                 self.main_window.after(0, lambda: util.msg_box(
                     'Welcome',
                     welcome_msg,
                     icon_path="icons/shield.png"
                 ))
-                self.speak(welcome_msg)  # Announce via TTS
+                self.speak(welcome_msg)
 
-                # Log the successful login
-                with open(self.log_path, 'a') as f:
-                    f.write(f'{name},{datetime.datetime.now()}\n')
+                # Log to Excel
+                self._log_attendance(name, emotion)
 
         except Exception as e:
+            error_msg = str(e) if str(e) else "Unknown error occurred"
+            print(f"Login error: {error_msg}")
             self.main_window.after(0, lambda: util.msg_box(
-                'Error',
-                f'Login failed: {str(e)}',
+                'Login Failed',
+                'Could not complete login process',
                 icon_path="icons/x-button.png"
             ))
 
         finally:
-            if os.path.exists(unknown_img_path):
-                os.remove(unknown_img_path)
+            # Clean up temporary files
+            if temp_img_path.exists():
+                try:
+                    temp_img_path.unlink()
+                except Exception as e:
+                    print(f"Failed to delete temp image: {e}")
 
 
     def register_new_user(self):
@@ -361,6 +552,9 @@ class App:
         # Save the captured image
         cv2.imwrite(os.path.join(self.db_dir, '{}.jpg'.format(name)), self.register_new_user_capture)
 
+        # Log the registration
+        self.log_attendance(name, "registration")  # Added this line
+
         # Close the registration window
         if hasattr(self, 'register_new_user_window') and self.register_new_user_window.winfo_exists():
             self.register_new_user_window.destroy()
@@ -372,5 +566,8 @@ class App:
 
 
 if __name__ == "__main__":
-    app = App() #INSTANCE
-    app.start()
+    app = App()
+    try:
+        app.start()
+    finally:
+        app.cleanup()
