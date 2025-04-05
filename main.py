@@ -20,16 +20,46 @@ from io import StringIO
 
 
 class App:
+
+    def show_splash_screen(self):
+        splash = tk.Toplevel()
+        splash.geometry("1050x600+500+300")
+        splash.overrideredirect(True)  # Remove window decorations
+
+        # Load and display splash image
+        splash_image_path = os.path.join(os.path.dirname(__file__), "splashImage", "splashimg.jpg")
+        if os.path.exists(splash_image_path):
+            img = Image.open(splash_image_path)
+            img = img.resize((1050, 600))
+            photo = ImageTk.PhotoImage(img)
+
+            label = tk.Label(splash, image=photo)
+            label.image = photo  # Keep a reference
+            label.pack()
+
+        # Close splash after 0.1 seconds
+        splash.after(100, splash.destroy)
+        return splash
+
+
+
+
     def __init__(self): #constructor  initializing our app
         self.main_window = tk.Tk() # creating our main window
-        self.main_window.geometry("1200x520+350+100") # size of the window AND X Y POSITION
+        self.main_window.withdraw()  # Hide main window initially
+
+        # Show splash screen
+        splash = self.show_splash_screen()
+        self.main_window.update()  # Force update to show splash
+
+        self.main_window.geometry("1250x520+350+100") # size of the window AND X Y POSITION  was 1200
         self.main_window.configure(bg="#1f1f1f") # bg color
         self.emotion_buffer = []  # Stores recent emotions
         self.buffer_size = 5      # Number of frames to average
         self.setup_logging()  # Initialize Excel logging
         self.log_lock = threading.Lock()
 
-        # 323232
+
         self.main_window.title("FaceRec") # title name
 
         self.canvas = Canvas(self.main_window, width=1100, height=600, bd=0, highlightthickness=0)
@@ -87,6 +117,10 @@ class App:
 
         self.register_new_user_button_main_window.bind("<Enter>", lambda e: self.on_enter(e, "lightgray"))
         self.register_new_user_button_main_window.bind("<Leave>", lambda e: self.on_leave(e, "white"))
+
+        # Close splash when done
+        splash.destroy()
+        self.main_window.deiconify()
 
 
 
