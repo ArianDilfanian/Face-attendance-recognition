@@ -3,25 +3,23 @@ import pickle
 import tkinter as tk
 from tkinter import messagebox
 import face_recognition
-import pyttsx3
-import threading
 from PIL import Image, ImageTk
+import threading
 
 
 def get_button(window, text, color, command, fg='white'):
     button = tk.Button(
-                        window,
-                        text=text,
-                        activebackground="black",
-                        activeforeground="white",
-                        fg=fg,
-                        bg=color,
-                        command=command,
-                        height=2,
-                        width=20,
-                        font=('Roboto', 20)
-                    )
-
+        window,
+        text=text,
+        activebackground="black",
+        activeforeground="white",
+        fg=fg,
+        bg=color,
+        command=command,
+        height=2,
+        width=20,
+        font=('Roboto', 20)
+    )
     return button
 
 
@@ -38,125 +36,100 @@ def get_text_label(window, text):
 
 
 def get_entry_text(window):
-    inputtxt = tk.Text(window,
-                       height=1,
-                       width=15, font=("Roboto", 32))
+    return tk.Text(window, height=1, width=15, font=("Roboto", 32))
 
 
-    return inputtxt
-
-
-#def msg_box(title, description):
- #   messagebox.showinfo(title, description)
-
-# Initialize text-to-speech engine
-engine = pyttsx3.init()
-
-
-def speak(text):
-    """ Function to make the AI voice speak """
-    engine.say(text)
-    engine.runAndWait()
-
-
-def msg_box(title, message, icon_path=None, speak_text=True, auto_close_time=7000):
-
-    msg_font = ("Roboto", 14)
-    btn_font = ("Montserrat", 12)
-    """ Show a centered message box with an optional icon in title & below text """
-
-    # Start speaking in a separate thread to prevent UI freezing
-    if speak_text:
-        threading.Thread(target=speak, args=(message,), daemon=True).start()
-
-    # Create a new top-level window
+def msg_box(title, message, icon_path=None, auto_close_time=7000):
+    """Show a centered message box with optional icon and auto-close"""
     root = tk.Toplevel()
     root.title(title)
 
-    # Default window size
+    # Window sizing and positioning
     window_width = 430
     window_height = 230
-
-    # Get screen width and height
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
-
-    # Calculate x and y coordinates to center the window
     x = (screen_width - window_width) // 2
     y = (screen_height - window_height) // 2
     root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    root.attributes('-topmost', True)
 
-    # If an icon is provided, load and set it
+    # Icon handling
+    icon_img = None
     if icon_path:
         try:
-            img = Image.open(icon_path)
-            img = img.resize((74, 74))  # Resize for better display
-            img = ImageTk.PhotoImage(img)
-
-            # Keep a reference to prevent garbage collection
-            root.img_ref = img
-
-            # Set icon in the title bar
-            root.iconphoto(False, img)
-
+            icon_img = Image.open(icon_path)
+            icon_img = icon_img.resize((74, 74))
+            icon_photo = ImageTk.PhotoImage(icon_img)
+            root.iconphoto(False, icon_photo)
+            root.img_ref = icon_photo  # Keep reference
         except Exception as e:
             print(f"Error loading icon: {e}")
 
-    # Create a frame for layout
+    # Frame container
     frame = tk.Frame(root, padx=20, pady=20)
     frame.pack(expand=True, fill="both")
 
-    # Message label with wrapping
-    label = tk.Label(frame, text=message, wraplength=250, justify="center", font = msg_font)
-    label.pack(pady=10)
+    # Message label
+    msg_label = tk.Label(
+        frame,
+        text=message,
+        wraplength=350,
+        justify="center",
+        font=("Roboto", 14)
+    )
+    msg_label.pack(pady=10)
 
-    # If an icon is provided, display it **below the text**
-    if icon_path:
-        img_label = tk.Label(frame, image=root.img_ref)
-        img_label.pack(pady=5)
+    # Icon display if available
+    if icon_img:
+        icon_label = tk.Label(frame, image=icon_photo)
+        icon_label.pack(pady=5)
 
     # OK button
-    button = tk.Button(frame, text="OK", command=root.destroy, font = btn_font)
-    button.pack(pady=5)
+    ok_btn = tk.Button(
+        frame,
+        text="OK",
+        command=root.destroy,
+        font=("Montserrat", 12)
+    )
+    ok_btn.pack(pady=5)
 
-    # Auto-close after specified time (default: 5000ms = 5s)
+    # Auto-close functionality
     root.after(auto_close_time, root.destroy)
-
-    # Bring window to front
-    root.lift()
-    root.attributes('-topmost', True)
-
-    root.mainloop()  # Run event loop
-
+    root.grab_set()
+    root.wait_window()
 
 
 def recognize(img, db_path):
-    # it is assumed there will be at most 1 match in the db
+    """Improved face recognition with error handling"""
+    try:
+        embeddings_unknown = face_recognition.face_encodings(img)
+        if not embeddings_unknown:
+            return 'no_persons_found'
 
-    embeddings_unknown = face_recognition.face_encodings(img)
-    if len(embeddings_unknown) == 0:
-        return 'no_persons_found'
-    else:
         embeddings_unknown = embeddings_unknown[0]
 
-    db_dir = sorted(os.listdir(db_path))
+        for file_name in sorted(os.listdir(db_path)):
+            if not file_name.endswith('.pickle'):
+                continue
 
-    match = False
-    j = 0
-    while not match and j < len(db_dir):
-        path_ = os.path.join(db_path, db_dir[j])
+            file_path = os.path.join(db_path, file_name)
 
-        file = open(path_, 'rb')
-        embeddings = pickle.load(file)
+            try:
+                with open(file_path, 'rb') as f:
+                    embeddings = pickle.load(f)
 
-        match = face_recognition.compare_faces([embeddings], embeddings_unknown)[0]
-        j += 1
+                if face_recognition.compare_faces([embeddings], embeddings_unknown)[0]:
+                    return os.path.splitext(file_name)[0]
 
-    if match:
-        return db_dir[j - 1][:-7]
-    else:
+            except Exception as e:
+                print(f"Error processing {file_name}: {e}")
+                continue
+
         return 'unknown_person'
 
-
+    except Exception as e:
+        print(f"Recognition error: {e}")
+        return 'error_occurred'
 
 
