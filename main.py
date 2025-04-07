@@ -255,6 +255,7 @@ class App:
         except Exception as e:
             logging.error(f"Critical logging failure: {e}")
 
+
     def _safe_excel_save(self):
         """Atomic Excel file save with retry logic"""
         for attempt in range(3):
@@ -274,12 +275,13 @@ class App:
                 time.sleep(0.5)
         return False
 
+
     def _log_attendance(self, name, emotion):
         """Thread-safe attendance logging with enhanced error handling"""
         for attempt in range(3):
             try:
                 now = datetime.now()
-                time_str = now.strftime("%H:%M:%S")
+                time_str = now.strftime("%I:%M:%S %p").lower()  # Format: "11:23:20 pm"
 
                 # 1. Ensure directories exist
                 self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -303,43 +305,49 @@ class App:
                 for idx, row in enumerate(self.sheet.iter_rows(min_row=2), start=2):
                     if row[0].value == name and row[3].value is None:
                         try:
-                            # Calculate duration
-                            time_in = datetime.strptime(row[2].value, "%H:%M:%S").time()
+                            # Parse Time In (already in 12-hour format)
+                            time_in_str = row[2].value  # e.g., "09:30:45 am"
+                            time_in = datetime.strptime(time_in_str, "%I:%M:%S %p").time()
                             time_in_dt = datetime.combine(now.date(), time_in)
 
+                            # Handle overnight case (e.g., Time Out after midnight)
                             if now.time() < time_in:
                                 time_in_dt -= timedelta(days=1)
 
+                            # Calculate duration
                             duration = now - time_in_dt
                             hours, rem = divmod(int(duration.total_seconds()), 3600)
                             minutes, seconds = divmod(rem, 60)
-                            duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                            duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"  # Duration in HH:MM:SS
 
-                            # Update record
-                            self.sheet.cell(row=idx, column=4, value=time_str)
-                            self.sheet.cell(row=idx, column=5, value=duration_str)
+                            # Update record (Time Out and Duration)
+                            self.sheet.cell(row=idx, column=4, value=time_str)  # Time Out
+                            self.sheet.cell(row=idx, column=5, value=duration_str)  # Duration
                             record_updated = True
                             break
                         except Exception as e:
                             logging.warning(f"Time calculation error: {e}")
                             continue
 
-                # 5. Add new record if needed
+                # 5. If no existing record, add new entry
                 if not record_updated:
-                    self.sheet.append([name, emotion, time_str, None, None])
+                    self.sheet.append([name, emotion, time_str, None, None])  # Time In only
 
                 # 6. Save changes
-                if self._safe_excel_save():
-                    logging.info(f"Successfully logged attendance for {name}")
-                    return
+                if not self._safe_excel_save():
+                    raise Exception("Failed to save workbook after 3 attempts")
 
-                raise IOError("Failed to save Excel file after 3 attempts")
+                logging.info(f"Logged attendance for {name}")
+                return True
 
             except Exception as e:
-                logging.error(f"Logging attempt {attempt + 1} failed: {e}")
-                if attempt == 2:
-                    self._log_to_text_backup(name, emotion, time_str)
+                logging.error(f"Attempt {attempt + 1} failed: {e}")
+                if attempt == 2:  # Final attempt
+                    self._create_emergency_log()
+                    logging.critical(f"Logged emergency entry for {name}")
                 time.sleep(0.5)
+        return False
+
 
     def _log_to_text_backup(self, name, emotion, time_str):
         """Fallback logging when Excel fails"""
