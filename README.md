@@ -46,7 +46,19 @@ FaceRec is a GUI-based face recognition system with real-time age and emotion de
 
 
 
+
 ## 📽️ Image and Videos
+
+
+![17](https://github.com/user-attachments/assets/19e2e026-8474-4613-b897-921339cffb1d)
+![18](https://github.com/user-attachments/assets/9f9370ee-fc56-4f0d-ad53-e89f65100246)
+![19](https://github.com/user-attachments/assets/2a07d24f-b717-4502-9869-671b827bdf62)
+![20](https://github.com/user-attachments/assets/bf2aa78c-e966-406a-88b4-17e266b69805)
+![21](https://github.com/user-attachments/assets/4e0364f2-9b2a-4d50-a444-970e24d2e9ff)
+![22](https://github.com/user-attachments/assets/2cd13a40-de1f-4ad9-8b17-0f90b7b91f79)
+![23](https://github.com/user-attachments/assets/6ef9f247-e65c-4679-b307-d3fb5f0c819a)
+![24](https://github.com/user-attachments/assets/c1db98a8-bb2b-4361-a3a7-4e267079deb9)
+![25](https://github.com/user-attachments/assets/284db6d9-cee2-4843-908f-9a016ff8d8e1)
 ---
 
 ## 🧰 Built With
