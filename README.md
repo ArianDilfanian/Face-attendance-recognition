@@ -3,9 +3,6 @@
 
 FaceRec is a GUI-based face recognition system with real-time age and emotion detection. It enables secure login and user registration using facial features, while also logging attendance data into Excel files, including emotional context. The system integrates several advanced libraries like face_recognition, DeepFace, OpenCV, pyttsx3, and Tkinter to deliver an intuitive and intelligent interface.
 
-# 🧠 FaceRec: Emotion-Aware Face Recognition Attendance System
-
-A smart, interactive attendance system using real-time face recognition, age and emotion detection, with voice feedback and secure logging.
 
 ---
 
