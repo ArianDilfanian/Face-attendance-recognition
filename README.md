@@ -68,7 +68,7 @@ https://github.com/user-attachments/assets/27f789fe-5483-4d54-bd5c-049c24b042e4
 ## 🧰 Built With
 ---
 
-- **Python 3.x**
+- **Python 3.10**
 - [`face_recognition`](https://github.com/ageitgey/face_recognition)
 - [`DeepFace`](https://github.com/serengil/deepface)
 - `OpenCV`
